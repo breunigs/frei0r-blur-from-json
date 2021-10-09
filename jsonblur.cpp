@@ -1,18 +1,7 @@
 #include "frei0r.hpp"
-#include <string>
-#include <limits>
-#include <climits>
-#include <cmath>
-#include <iostream>
-#include <fstream>
-#include <map>
-#include <random>
 
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
-#include <boost/iostreams/filtering_streambuf.hpp>
-#include <boost/iostreams/copy.hpp>
-#include <boost/foreach.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 
@@ -35,8 +24,6 @@ public:
     virtual void update(double time, uint32_t *out, const uint32_t *in)
     {
         Magick::Image img = Magick::Image(width, height, "RGBA", Magick::StorageType::CharPixel, in);
-        std::cerr << "blurring at " << time << std::endl;
-
         boost::property_tree::ptree blurs = get_blurs_for_frame(time);
         for (auto &[_idx, blur] : blurs)
         {
