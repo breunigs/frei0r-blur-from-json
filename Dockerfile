@@ -7,6 +7,7 @@ RUN apt-get update --yes \
   frei0r-plugins-dev \
   g++ \
   libboost-dev \
+  libboost-iostreams-dev \
   libmagick++-6-headers \
   libmagick++-6.q16-dev \
   make \
