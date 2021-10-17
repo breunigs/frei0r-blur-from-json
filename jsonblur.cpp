@@ -4,7 +4,9 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
-
+#include <algorithm>
+#include <vector>
+#include <future>
 #include <Magick++.h>
 
 class Jsonblur : public frei0r::filter
@@ -15,6 +17,8 @@ public:
     {
         m_skipFrames = 0;
         m_jsonPath = "";
+        m_fullMask = Magick::Image(Magick::Geometry(width, height), Magick::Color("black"));
+
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
     }
@@ -23,21 +27,111 @@ public:
 
     virtual void update(double time, uint32_t *out, const uint32_t *in)
     {
-        Magick::Image img = Magick::Image(width, height, "RGBA", Magick::StorageType::CharPixel, in);
-        boost::property_tree::ptree blurs = get_blurs_for_frame(time);
+        auto imgFuture = load_image(in);
+        auto blurs = get_blurs_for_frame(time);
+
+        std::vector<Magick::Geometry> regions;
+        regions.reserve(blurs.size());
+
         for (auto &[_idx, blur] : blurs)
         {
-            img = multi_blur_region(img, blur);
+            int x = round(blur.get<double>("x_min"));
+            int y = round(blur.get<double>("y_min"));
+            int w = round(blur.get<double>("x_max")) - x;
+            int h = round(blur.get<double>("y_max")) - y;
+            bool isFace = blur.get<std::string>("kind") == "face";
+
+            auto [tinyMask, region] = create_mask(w, h, isFace);
+            region.xOff(region.xOff() + x);
+            region.yOff(region.yOff() + y);
+
+            regions.push_back(region);
+
+            m_fullMask.composite(tinyMask, region, Magick::OverCompositeOp);
         }
+
+        auto img = imgFuture.get();
+        img.mask(m_fullMask);
+
+        for (const auto &region : regions)
+        {
+            Magick::Image crop = img;
+            crop.crop(region);
+
+            // increase blur strength for big areas to avoid them still being recognizable
+            int blurStrength = std::max(5.0, std::max(region.width(), region.height()) / 15.0);
+            crop.blur(0, blurStrength);
+
+            img.composite(crop, region, Magick::OverCompositeOp);
+        }
+
         img.write(0, 0, width, height, "RGBA", Magick::StorageType::CharPixel, out);
     }
 
 private:
     std::string m_jsonPath;
     double m_skipFrames;
+    Magick::Image m_fullMask;
+
     boost::property_tree::ptree m_blurs;
     boost::property_tree::ptree::const_iterator m_blurs_iterator;
     boost::property_tree::ptree::const_iterator m_blurs_last;
+
+    std::future<Magick::Image> load_image(const uint32_t *in)
+    {
+        auto w = width;
+        auto h = height;
+        return std::async(std::launch::async, [w, h, in]
+                          { return Magick::Image(w, h, "RGBA", Magick::StorageType::CharPixel, in); });
+    }
+
+    const double percentageBoost = 0.1;
+    const double blurRadius = 5;
+    const int blurMaskModulo = 5;
+    std::map<std::tuple<int, int, bool>, std::tuple<Magick::Image, Magick::Geometry>> maskCache;
+    std::tuple<Magick::Image, Magick::Geometry> create_mask(int w, int h, bool isFace)
+    {
+        // round up blur areas to the nearest n pixels to improve cache usage
+        w = w + blurMaskModulo - (w % blurMaskModulo);
+        h = h + blurMaskModulo - (h % blurMaskModulo);
+
+        auto args = std::make_tuple(w, h, isFace);
+        auto memoized = maskCache.find(args);
+        if (memoized != maskCache.end())
+        {
+            return memoized->second;
+        }
+
+        double bW = std::max(2.0 * blurRadius, percentageBoost * w);
+        double bH = std::max(2.0 * blurRadius, percentageBoost * h);
+
+        Magick::Geometry region(w + 2 * bW + 4 * blurRadius,
+                                h + 2 * bH + 4 * blurRadius,
+                                -bW - 2 * blurRadius,
+                                -bH - 2 * blurRadius);
+
+        Magick::Image tinyMask(region, Magick::Color("white"));
+        tinyMask.fillColor(Magick::Color("black"));
+        tinyMask.strokeWidth(0);
+
+        double roundW = bW;
+        double roundH = bH;
+        if (isFace)
+        {
+            roundW += w;
+            roundH += h;
+        }
+
+        tinyMask.draw(Magick::DrawableRoundRectangle(blurRadius * 2,
+                                                     blurRadius * 2,
+                                                     w + 2 * bW + blurRadius * 2,
+                                                     h + 2 * bH + blurRadius * 2,
+                                                     roundW, roundH));
+        tinyMask.blur(0, blurRadius);
+
+        maskCache[args] = std::make_tuple(tinyMask, region);
+        return maskCache[args];
+    }
 
     boost::property_tree::ptree get_blurs_for_frame(double time)
     {
@@ -52,33 +146,6 @@ private:
         boost::property_tree::ptree blurs = m_blurs_iterator->second;
         ++m_blurs_iterator;
         return blurs;
-    }
-
-    Magick::Image multi_blur_region(Magick::Image img, boost::property_tree::ptree const &blur)
-    {
-        std::map<std::string, int> dict = to_int_dict(blur);
-        int x = dict["x_min"];
-        int y = dict["y_min"];
-        int w = dict["x_max"] - x;
-        int h = dict["y_max"] - y;
-
-        img = single_blur_region(img, w, h, x, y, 15, 0);
-        img = single_blur_region(img, w, h, x, y, 4, 4);
-        img = single_blur_region(img, w, h, x, y, 2, 8);
-        img = single_blur_region(img, w, h, x, y, 1, 12);
-        return img;
-    }
-
-    Magick::Image single_blur_region(Magick::Image img, int w, int h, int x, int y, int sigma, int extraPixels)
-    {
-        Magick::Geometry region = Magick::Geometry(w + 2 * extraPixels, h + 2 * extraPixels,
-                                                   x - extraPixels, y - extraPixels);
-
-        Magick::Image crop = img;
-        crop.crop(region);
-        crop.blur(0, sigma);
-        img.composite(crop, region, Magick::AtopCompositeOp);
-        return img;
     }
 
     bool blurs_read = false;
@@ -109,18 +176,6 @@ private:
             m_blurs_iterator++;
 
         file.close();
-    }
-
-    std::map<std::string, int> to_int_dict(boost::property_tree::ptree const &pt)
-    {
-        std::map<std::string, int> dict;
-        for (auto &[k, v] : pt)
-        {
-            if (k == "kind")
-                continue;
-            dict.emplace(k, round(v.get_value<double>()));
-        }
-        return dict;
     }
 };
 
