@@ -61,7 +61,7 @@ public:
             crop.crop(region);
 
             // increase blur strength for big areas to avoid them still being recognizable
-            int blurStrength = std::max(5.0, std::max(region.width(), region.height()) / 15.0);
+            int blurStrength = std::max(5.0, std::max(region.width(), region.height()) / 10.0);
             crop.blur(0, blurStrength);
 
             img.composite(crop, region, Magick::OverCompositeOp);
