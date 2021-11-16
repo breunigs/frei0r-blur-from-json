@@ -17,7 +17,6 @@ public:
     {
         m_skipFrames = 0;
         m_jsonPath = "";
-        m_fullMask = Magick::Image(Magick::Geometry(width, height), Magick::Color("black"));
 
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
@@ -33,6 +32,8 @@ public:
         std::vector<Magick::Geometry> regions;
         regions.reserve(blurs.size());
 
+        auto fullMask = Magick::Image(Magick::Geometry(width, height), Magick::Color("black"));
+
         for (auto &[_idx, blur] : blurs)
         {
             int x = round(blur.get<double>("x_min"));
@@ -47,11 +48,12 @@ public:
 
             regions.push_back(region);
 
-            m_fullMask.composite(tinyMask, region, Magick::OverCompositeOp);
+            fullMask.composite(tinyMask, region, Magick::PlusCompositeOp);
         }
 
         auto img = imgFuture.get();
-        img.mask(m_fullMask);
+        fullMask.negate();
+        img.mask(fullMask);
 
         for (const auto &region : regions)
         {
@@ -110,8 +112,8 @@ private:
                                 -bW - 2 * blurRadius,
                                 -bH - 2 * blurRadius);
 
-        Magick::Image tinyMask(region, Magick::Color("white"));
-        tinyMask.fillColor(Magick::Color("black"));
+        Magick::Image tinyMask(region, Magick::Color("black"));
+        tinyMask.fillColor(Magick::Color("white"));
         tinyMask.strokeWidth(0);
 
         double roundW = bW;
