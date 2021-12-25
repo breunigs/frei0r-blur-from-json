@@ -40,9 +40,14 @@ public:
             int y = round(blur.get<double>("y_min"));
             int w = round(blur.get<double>("x_max")) - x;
             int h = round(blur.get<double>("y_max")) - y;
-            bool isFace = blur.get<std::string>("kind") == "face";
+            auto kind = blur.get<std::string>("kind");
+            float roundCornerRatio = 0.0;
+            if (kind == "face")
+                roundCornerRatio = 1.0;
+            if (kind == "person")
+                roundCornerRatio = 0.5;
 
-            auto [tinyMask, region] = create_mask(w, h, isFace);
+            auto [tinyMask, region] = create_mask(w, h, roundCornerRatio);
             region.xOff(region.xOff() + x);
             region.yOff(region.yOff() + y);
 
@@ -91,13 +96,13 @@ private:
     const double blurRadius = 5;
     const int blurMaskModulo = 5;
     std::map<std::tuple<int, int, bool>, std::tuple<Magick::Image, Magick::Geometry>> maskCache;
-    std::tuple<Magick::Image, Magick::Geometry> create_mask(int w, int h, bool isFace)
+    std::tuple<Magick::Image, Magick::Geometry> create_mask(int w, int h, float roundCornerRatio)
     {
         // round up blur areas to the nearest n pixels to improve cache usage
         w = w + blurMaskModulo - (w % blurMaskModulo);
         h = h + blurMaskModulo - (h % blurMaskModulo);
 
-        auto args = std::make_tuple(w, h, isFace);
+        auto args = std::make_tuple(w, h, roundCornerRatio);
         auto memoized = maskCache.find(args);
         if (memoized != maskCache.end())
         {
@@ -118,11 +123,8 @@ private:
 
         double roundW = bW;
         double roundH = bH;
-        if (isFace)
-        {
-            roundW += w;
-            roundH += h;
-        }
+        roundW += roundCornerRatio * w;
+        roundH += roundCornerRatio * h;
 
         tinyMask.draw(Magick::DrawableRoundRectangle(blurRadius * 2,
                                                      blurRadius * 2,
