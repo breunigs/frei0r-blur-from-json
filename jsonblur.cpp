@@ -27,7 +27,7 @@ public:
     virtual void update(double time, uint32_t *out, const uint32_t *in)
     {
         auto imgFuture = load_image(in);
-        auto blurs = get_blurs_for_frame(time);
+        auto blurs = get_blurs_for_frame();
 
         std::vector<Magick::Geometry> regions;
         regions.reserve(blurs.size());
@@ -137,35 +137,43 @@ private:
         return maskCache[args];
     }
 
-    boost::property_tree::ptree get_blurs_for_frame(double time)
+    bool blurs_loaded = false;
+    int retries = 0;
+    boost::property_tree::ptree get_blurs_for_frame()
     {
-        load_blurs_from_disk(time);
-        if (m_blurs_iterator == m_blurs_last)
+        if (!blurs_loaded)
+            blurs_loaded = load_blurs_from_disk();
+
+        if (!blurs_loaded || m_blurs_iterator == m_blurs_last)
         {
-            std::cerr << "ERROR: Trying to blur more frames than we have blur info for (";
-            std::cerr << m_jsonPath << ")" << std::endl;
-            exit(EXIT_FAILURE);
+            blurs_loaded = false;
+            retries++;
+            auto wait = std::pow(2, retries);
+
+            std::cerr << "WARNING: Trying to blur more frames than we have blur info for (";
+            std::cerr << m_jsonPath << "). Waiting " << wait << "s before retry..." << std::endl;
+
+            sleep(wait);
+            return get_blurs_for_frame();
         }
+
+        retries = 0;
 
         boost::property_tree::ptree blurs = m_blurs_iterator->second;
         ++m_blurs_iterator;
+        m_skipFrames += 1.0;
         return blurs;
     }
 
-    bool blurs_read = false;
-    void load_blurs_from_disk(double time)
+    bool load_blurs_from_disk()
     {
-        if (blurs_read)
-            return;
-        blurs_read = true;
-
         std::cerr << "Loading blurs from " << m_jsonPath << std::endl;
         std::ifstream file;
         file.open(m_jsonPath, std::ios_base::in | std::ios_base::binary);
         if (!file)
         {
-            std::cerr << "ERROR: JSON blur info not found at: " << m_jsonPath << std::endl;
-            exit(EXIT_FAILURE);
+            std::cerr << "WARNING: JSON blur info not found at: " << m_jsonPath << std::endl;
+            return false;
         }
 
         boost::iostreams::filtering_stream<boost::iostreams::input> decompressor;
@@ -180,6 +188,7 @@ private:
             m_blurs_iterator++;
 
         file.close();
+        return true;
     }
 };
 
