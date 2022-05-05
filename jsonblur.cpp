@@ -1,13 +1,15 @@
 #include "frei0r.hpp"
 
-#include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
-#include <boost/property_tree/ptree.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
 #include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 #include <algorithm>
-#include <vector>
 #include <future>
-#include <Magick++.h>
+#include <optional>
+#include <map>
+#include <vector>
+#include <vips/vips8>
 
 class Jsonblur : public frei0r::filter
 {
@@ -17,24 +19,21 @@ public:
     {
         m_skipFrames = 0;
         m_jsonPath = "";
-
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
     }
 
-    ~Jsonblur() {}
+    ~Jsonblur()
+    {
+        cleanup();
+    }
 
     virtual void update(double time, uint32_t *out, const uint32_t *in)
     {
-        auto imgFuture = load_image(in);
-        auto blurs = get_blurs_for_frame();
+        auto result = as_vips_image(out);
+        as_vips_image(in).write(result);
 
-        std::vector<Magick::Geometry> regions;
-        regions.reserve(blurs.size());
-
-        auto fullMask = Magick::Image(Magick::Geometry(width, height), Magick::Color("black"));
-
-        for (auto &[_idx, blur] : blurs)
+        for (auto &[_idx, blur] : get_blurs_for_frame())
         {
             int x = round(blur.get<double>("x_min"));
             int y = round(blur.get<double>("y_min"));
@@ -45,59 +44,99 @@ public:
             if (kind == "face")
                 roundCornerRatio = 1.0;
             if (kind == "person")
-                roundCornerRatio = 0.5;
+                roundCornerRatio = 0.8;
 
-            auto [tinyMask, region] = create_mask(w, h, roundCornerRatio);
-            region.xOff(region.xOff() + x);
-            region.yOff(region.yOff() + y);
+            auto [offX, offY, mask] = create_mask(w, h, roundCornerRatio);
 
-            regions.push_back(region);
+            // clamp to top left corner
+            int left = std::max(0, x - offX);
+            int top = std::max(0, y - offY);
 
-            fullMask.composite(tinyMask, region, Magick::PlusCompositeOp);
+            // ensure mask does not overflow original image
+            int mLeft = std::min(0, x - offX) * -1;
+            int mTop = std::min(0, y - offY) * -1;
+            int mWidth = std::min(mask.width(), int(width) - left) - mLeft;
+            int mHeight = std::min(mask.height(), int(height) - top) - mTop;
+            if (mWidth < 0 || mHeight < 0)
+                continue;
+            mask = mask.crop(mLeft, mTop, mWidth, mHeight);
+
+            double blurStrength = round(std::max(5.0, std::max(w, h) / 10.0));
+            auto cropped = result.crop(left, top, mask.width(), mask.height());
+            auto blurCrop = cropped.gaussblur(blurStrength);
+            cropped = mask.ifthenelse(blurCrop, cropped, vips::VImage::option()->set("blend", true));
+
+            result.draw_image(cropped, left, top);
         }
 
-        auto img = imgFuture.get();
-        fullMask.negate();
-        img.mask(fullMask);
-
-        for (const auto &region : regions)
-        {
-            Magick::Image crop = img;
-            crop.crop(region);
-
-            // increase blur strength for big areas to avoid them still being recognizable
-            int blurStrength = std::max(5.0, std::max(region.width(), region.height()) / 10.0);
-            crop.blur(0, blurStrength);
-
-            img.composite(crop, region, Magick::OverCompositeOp);
-        }
-
-        img.write(0, 0, width, height, "RGBA", Magick::StorageType::CharPixel, out);
+        cleanupOnIdle();
     }
 
 private:
     std::string m_jsonPath;
     double m_skipFrames;
-    Magick::Image m_fullMask;
 
     boost::property_tree::ptree m_blurs;
     boost::property_tree::ptree::const_iterator m_blurs_iterator;
     boost::property_tree::ptree::const_iterator m_blurs_last;
 
-    std::future<Magick::Image> load_image(const uint32_t *in)
+    vips::VImage as_vips_image(const uint32_t *location)
     {
-        auto w = width;
-        auto h = height;
-        return std::async(std::launch::async, [w, h, in]
-                          { return Magick::Image(w, h, "RGBA", Magick::StorageType::CharPixel, in); });
+        const int bands = 4;
+        const int uints_in_uint32 = 4;
+
+        return vips::VImage::new_from_memory((void *)location, size * uints_in_uint32 * bands, width, height, bands, VipsBandFormat::VIPS_FORMAT_UCHAR);
     }
 
-    const double percentageBoost = 0.1;
+    void cleanup()
+    {
+        std::lock_guard<std::mutex> guard(maskCacheMutex);
+        maskCache.clear();
+        maskCacheLRU.clear();
+    }
+
+    std::atomic<int> updateTick = 0;
+    std::atomic<bool> cleanupOnIdleValid = false;
+    void cleanupOnIdle()
+    {
+        updateTick++;
+
+        if (cleanupOnIdleValid)
+            return;
+
+        cleanupOnIdleValid = true;
+        auto thread = std::thread{
+            [this]()
+            {
+                int previousTick = 0;
+                while (true)
+                {
+                    std::this_thread::sleep_for(std::chrono::seconds(60));
+                    int currentTick = updateTick.load();
+                    if (previousTick == currentTick)
+                        break;
+                    previousTick = currentTick;
+                }
+                cleanup();
+                cleanupOnIdleValid = false; }};
+
+        thread.detach();
+    }
+
+    typedef std::tuple<int, int, bool> maskCacheKey;
+    typedef std::tuple<int, int, vips::VImage> maskCacheValue;
+    std::map<maskCacheKey, maskCacheValue> maskCache;
+    std::list<maskCacheKey> maskCacheLRU;
+    std::mutex maskCacheMutex;
+    const int maskCacheCapacity = 500;
+
+    const double percentageBoost = 0.5;
     const double blurRadius = 5;
     const int blurMaskModulo = 5;
-    std::map<std::tuple<int, int, bool>, std::tuple<Magick::Image, Magick::Geometry>> maskCache;
-    std::tuple<Magick::Image, Magick::Geometry> create_mask(int w, int h, float roundCornerRatio)
+    maskCacheValue create_mask(int w, int h, float roundCornerRatio)
     {
+        std::lock_guard<std::mutex> guard(maskCacheMutex);
+
         // round up blur areas to the nearest n pixels to improve cache usage
         w = w + blurMaskModulo - (w % blurMaskModulo);
         h = h + blurMaskModulo - (h % blurMaskModulo);
@@ -109,31 +148,40 @@ private:
             return memoized->second;
         }
 
-        double bW = std::max(2.0 * blurRadius, percentageBoost * w);
-        double bH = std::max(2.0 * blurRadius, percentageBoost * h);
+        // do not enlarge the blur area too much for small detections
+        double bW = std::min(2 * blurRadius, percentageBoost * w);
+        double bH = std::min(2 * blurRadius, percentageBoost * h);
 
-        Magick::Geometry region(w + 2 * bW + 4 * blurRadius,
-                                h + 2 * bH + 4 * blurRadius,
-                                -bW - 2 * blurRadius,
-                                -bH - 2 * blurRadius);
+        double maskW = w + 2 * bW;
+        double maskH = h + 2 * bH;
 
-        Magick::Image tinyMask(region, Magick::Color("black"));
-        tinyMask.fillColor(Magick::Color("white"));
-        tinyMask.strokeWidth(0);
+        int offX = bW + blurRadius * 2;
+        int offY = bH + blurRadius * 2;
 
-        double roundW = bW;
-        double roundH = bH;
-        roundW += roundCornerRatio * w;
-        roundH += roundCornerRatio * h;
+        double radX = maskW / 2 * roundCornerRatio;
+        double radY = maskH / 2 * roundCornerRatio;
 
-        tinyMask.draw(Magick::DrawableRoundRectangle(blurRadius * 2,
-                                                     blurRadius * 2,
-                                                     w + 2 * bW + blurRadius * 2,
-                                                     h + 2 * bH + blurRadius * 2,
-                                                     roundW, roundH));
-        tinyMask.blur(0, blurRadius);
+        char *svg = g_strdup_printf(
+            "<svg viewBox=\"0 0 %g %g\"><rect width=\"%g\" height=\"%g\" x=\"%g\" y=\"%g\" rx=\"%g\" ry=\"%g\" fill=\"#fff\" /></svg>",
+            maskW + 4 * blurRadius, maskH + 4 * blurRadius,
+            maskW, maskH,
+            2 * blurRadius, 2 * blurRadius,
+            radX, radY);
 
-        maskCache[args] = std::make_tuple(tinyMask, region);
+        auto tinyMask = vips::VImage::new_from_buffer(std::string(svg), "")
+                            .extract_band(1)
+                            .gaussblur(blurRadius);
+
+        if (maskCache.size() >= maskCacheCapacity)
+        {
+            // evict oldest element
+            auto i = --maskCacheLRU.end();
+            maskCache.erase(*i);
+            maskCacheLRU.erase(i);
+        }
+        maskCacheLRU.push_front(args);
+        maskCache[args] = std::make_tuple(offX, offY, tinyMask);
+
         return maskCache[args];
     }
 
@@ -159,7 +207,7 @@ private:
 
         retries = 0;
 
-        boost::property_tree::ptree blurs = m_blurs_iterator->second;
+        auto blurs = m_blurs_iterator->second;
         ++m_blurs_iterator;
         m_skipFrames += 1.0;
         return blurs;
