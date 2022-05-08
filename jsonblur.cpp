@@ -196,7 +196,7 @@ private:
         {
             blurs_loaded = false;
             retries++;
-            auto wait = std::pow(2, retries);
+            auto wait = std::min(30.0 * 60.0, std::pow(2, retries));
 
             std::cerr << "WARNING: Trying to blur more frames than we have blur info for (";
             std::cerr << m_jsonPath << "). Waiting " << wait << "s before retry..." << std::endl;
