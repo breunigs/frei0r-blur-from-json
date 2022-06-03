@@ -19,8 +19,10 @@ public:
     {
         m_skipFrames = 0;
         m_jsonPath = "";
+        m_minScore = 0.2;
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
+        register_param(m_minScore, "minScore", "Float from 0.0 to 1.0. The larger, the higher the confidence the detection is correct. By default objects with a score greater than 0.2 will be blurred.");
     }
 
     ~Jsonblur()
@@ -35,6 +37,10 @@ public:
 
         for (auto &[_idx, blur] : get_blurs_for_frame())
         {
+            double score = blur.get<double>("score");
+            if (score < m_minScore)
+                continue;
+
             int x = round(blur.get<double>("x_min"));
             int y = round(blur.get<double>("y_min"));
             int w = round(blur.get<double>("x_max")) - x;
@@ -75,6 +81,7 @@ public:
 private:
     std::string m_jsonPath;
     double m_skipFrames;
+    double m_minScore;
 
     boost::property_tree::ptree m_blurs;
     boost::property_tree::ptree::const_iterator m_blurs_iterator;

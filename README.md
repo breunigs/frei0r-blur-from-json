@@ -1,7 +1,28 @@
 A simple frei0r plugin for use in ffmpeg. It reads an external `.json.gz` that
 contains per-frame blur information. The plugin will then blur these image
-parts. Since the FPS are not known to the video filter, a param can be given
-indicating the number of frames to skip from the blur `.json.gz`.
+parts.
+
+Example filter definition:
+```
+frei0r=jsonblur:somefile.MP4.json.gz|14|0.3
+```
+
+* `frei0r` tells ffmpeg to invoke the frei0r filter tooling
+* `jsonblur` is the name of the binary that frei0r will invoke, i.e. the output
+  of this repo when being built
+* `somefile.MP4.json.gz` (param name: `jsonPath`) is the path to the file
+  containing the detections that should be blurred. See below for details.
+* `14` (param name: `skipFrames`): skip the first n frames in the `.json.gz`.
+  Since is unfortunately required, since frei0r only passes a timestamp to the
+  filter, but not the FPS (frames per second). Since the detections are indexed
+  by frame count and not timestamp, the filter can't find the correct frame by
+  itself. If you start the video at the beginning, pass a `0` or omit the param.
+  If you cut the video at the start (e.g. `-ss` ffmpeg param), see the Example
+  on how to calculate the correct frame count to pass.
+* `0.3` (param name: `minScore`): only blur detections whose score exceeds this
+  value. You can most likely omit this, the code has a sensible default. The
+  intent is to run the detections once, keeping even the ones with low
+  confidence. You can then cheaply tune what actually gets blurred.
 
 ## Example Usage
 
@@ -85,10 +106,22 @@ The format is that of [video-anon-lossless], which is built on top of
 }
 ```
 
-This example has two blurs for frame 0, and one blur for frame 1. Only `y_min`,
-`x_min`, `y_max`, `x_max` parameters are used, but the implementation will break
-if any other non-float field than `kind` is added (due to a lazy
-implementation).
+This example has two blurs for frame 0, and one blur for frame 1.
+
+`y_min`, `x_min`, `y_max`, `x_max` parameters are used to position the blur
+within the video frame. Therefore the values should be within the video frame's
+width/height.
+
+`score` is a value between 0 and 1, denoting the confidence of the detection.
+Only detections with scores greater than the `minScore` parameter will be
+blurred.
+
+`kind` contains the detected object, which is usually a predefined enum from the
+detection tooling. This library uses it to round the corners of the rectangle to
+make the blur better fit the detected object and the transition to the blur less
+jarring. Specifically, a value of `face` will lead to the blur being an ellipse,
+`person` gets slightly rounded corners and everything else gets no rounding.
+
 
 [upstream filter docs]: https://ffmpeg.org/ffmpeg-filters.html#frei0r-1
 [video-anon-lossless]: https://github.com/breunigs/video-anon-lossless
