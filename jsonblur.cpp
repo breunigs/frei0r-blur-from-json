@@ -225,6 +225,12 @@ private:
         std::cerr << "Loading blurs from " << m_jsonPath << std::endl;
         std::ifstream file;
         file.open(m_jsonPath, std::ios_base::in | std::ios_base::binary);
+
+        // if the completed file doesn't exist, check if there's a WIP one we
+        // can use
+        if (!file)
+            file.open(m_jsonPath + "_wip", std::ios_base::in | std::ios_base::binary);
+
         if (!file)
         {
             std::cerr << "WARNING: JSON blur info not found at: " << m_jsonPath << std::endl;
