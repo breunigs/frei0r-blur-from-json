@@ -11,6 +11,13 @@
 #include <vector>
 #include <vips/vips8>
 
+typedef std::tuple<int, int, bool> maskCacheKey;
+typedef std::tuple<int, int, vips::VImage> maskCacheValue;
+std::map<maskCacheKey, maskCacheValue> maskCache;
+std::list<maskCacheKey> maskCacheLRU;
+std::mutex maskCacheMutex;
+const int maskCacheCapacity = 500;
+
 class Jsonblur : public frei0r::filter
 {
 
@@ -25,10 +32,7 @@ public:
         register_param(m_minScore, "minScore", "Float from 0.0 to 1.0. The larger, the higher the confidence the detection is correct. By default objects with a score greater than 0.2 will be blurred.");
     }
 
-    ~Jsonblur()
-    {
-        cleanup();
-    }
+    ~Jsonblur() {}
 
     virtual void update(double time, uint32_t *out, const uint32_t *in)
     {
@@ -74,8 +78,6 @@ public:
 
             result.draw_image(cropped, left, top);
         }
-
-        cleanupOnIdle();
     }
 
 private:
@@ -94,48 +96,6 @@ private:
 
         return vips::VImage::new_from_memory((void *)location, size * uints_in_uint32 * bands, width, height, bands, VipsBandFormat::VIPS_FORMAT_UCHAR);
     }
-
-    void cleanup()
-    {
-        std::lock_guard<std::mutex> guard(maskCacheMutex);
-        maskCache.clear();
-        maskCacheLRU.clear();
-    }
-
-    std::atomic<int> updateTick = 0;
-    std::atomic<bool> cleanupOnIdleValid = false;
-    void cleanupOnIdle()
-    {
-        updateTick++;
-
-        if (cleanupOnIdleValid)
-            return;
-
-        cleanupOnIdleValid = true;
-        auto thread = std::thread{
-            [this]()
-            {
-                int previousTick = 0;
-                while (true)
-                {
-                    std::this_thread::sleep_for(std::chrono::seconds(60));
-                    int currentTick = updateTick.load();
-                    if (previousTick == currentTick)
-                        break;
-                    previousTick = currentTick;
-                }
-                cleanup();
-                cleanupOnIdleValid = false; }};
-
-        thread.detach();
-    }
-
-    typedef std::tuple<int, int, bool> maskCacheKey;
-    typedef std::tuple<int, int, vips::VImage> maskCacheValue;
-    std::map<maskCacheKey, maskCacheValue> maskCache;
-    std::list<maskCacheKey> maskCacheLRU;
-    std::mutex maskCacheMutex;
-    const int maskCacheCapacity = 500;
 
     const double percentageBoost = 0.5;
     const double blurRadius = 5;
