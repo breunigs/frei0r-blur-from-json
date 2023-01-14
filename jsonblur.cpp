@@ -122,17 +122,17 @@ private:
         double maskW = w + 2 * bW;
         double maskH = h + 2 * bH;
 
-        int offX = bW + blurRadius * 2;
-        int offY = bH + blurRadius * 2;
+        int offX = bW + blurRadius;
+        int offY = bH + blurRadius;
 
         double radX = maskW / 2 * roundCornerRatio;
         double radY = maskH / 2 * roundCornerRatio;
 
         char *svg = g_strdup_printf(
             "<svg viewBox=\"0 0 %g %g\"><rect width=\"%g\" height=\"%g\" x=\"%g\" y=\"%g\" rx=\"%g\" ry=\"%g\" fill=\"#fff\" /></svg>",
-            maskW + 4 * blurRadius, maskH + 4 * blurRadius,
+            maskW + 2 * blurRadius, maskH + 2 * blurRadius,
             maskW, maskH,
-            2 * blurRadius, 2 * blurRadius,
+            blurRadius, blurRadius,
             radX, radY);
 
         auto tinyMask = vips::VImage::new_from_buffer(std::string(svg), "")
