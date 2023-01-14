@@ -73,7 +73,7 @@ public:
 
             double blurStrength = round(std::max(5.0, std::max(w, h) / 10.0));
             auto cropped = result.crop(left, top, mask.width(), mask.height());
-            auto blurCrop = cropped.gaussblur(blurStrength);
+            auto blurCrop = cropped.gaussblur(blurStrength, vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
             cropped = mask.ifthenelse(blurCrop, cropped, vips::VImage::option()->set("blend", true));
 
             result.draw_image(cropped, left, top);
@@ -137,7 +137,7 @@ private:
 
         auto tinyMask = vips::VImage::new_from_buffer(std::string(svg), "")
                             .extract_band(1)
-                            .gaussblur(blurRadius);
+                            .gaussblur(blurRadius, vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
 
         if (maskCache.size() >= maskCacheCapacity)
         {
