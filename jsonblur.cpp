@@ -71,7 +71,7 @@ public:
                 continue;
             mask = mask.crop(mLeft, mTop, mWidth, mHeight);
 
-            double blurStrength = round(std::max(5.0, std::max(w, h) / 10.0));
+            double blurStrength = round(std::max(3.0, std::max(w, h) / 10.0));
             auto cropped = result.crop(left, top, mask.width(), mask.height());
             auto blurCrop = cropped.gaussblur(blurStrength, vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
             cropped = mask.ifthenelse(blurCrop, cropped, vips::VImage::option()->set("blend", true));
