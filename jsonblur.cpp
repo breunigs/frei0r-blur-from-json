@@ -56,7 +56,20 @@ public:
             if (kind == "person")
                 roundCornerRatio = 0.8;
 
+            // if detection is at a border, simply enlarge mask to hide rounded
+            // corners
+            if (roundCornerRatio > 0 && (x + w > width - 10 || x < 10))
+                w = w * 2;
+            if (roundCornerRatio > 0 && (y + h > height - 10 || y < 10))
+                h = h * 2;
+
             auto [offX, offY, mask] = create_mask(w, h, roundCornerRatio);
+
+            // top/left needs shifting to stay centered
+            if (roundCornerRatio > 0 && (x < 5))
+                offX = offX + w * 0.5;
+            if (roundCornerRatio > 0 && (y < 5))
+                offY = offY + h * 0.5;
 
             // clamp to top left corner
             int left = std::max(0, x - offX);
