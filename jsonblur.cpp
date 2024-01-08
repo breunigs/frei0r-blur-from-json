@@ -146,6 +146,7 @@ private:
                             .extract_band(1)
                             .gaussblur(blurRadius,
                                        vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
+        g_free(svg);
 
         if (maskCache.size() >= maskCacheCapacity) {
             // evict oldest element
