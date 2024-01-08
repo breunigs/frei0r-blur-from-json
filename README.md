@@ -53,7 +53,7 @@ This will build the plugin in a Docker container. See the `Dockerfile` on what
 build dependencies are needed. If the versions used in docker are the exact same
 as on your system, you can extract the resulting filter like this:
 ```bash
-DOCKER_BUILDKIT=1 docker build -o type=local,dest=. --target artifacts
+DOCKER_BUILDKIT=1 docker build -o type=local,dest=. --target artifacts .
 ```
 Note that if the versions don't match ffmpeg will complain with `Could not find
 module 'jsonblur'.` even if it found the incompatible version.

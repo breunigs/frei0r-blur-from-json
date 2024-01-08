@@ -1,4 +1,4 @@
-FROM debian:stable-slim AS build
+FROM debian:testing-slim AS build
 WORKDIR /build/
 
 RUN apt-get update --yes \
@@ -8,8 +8,7 @@ RUN apt-get update --yes \
   g++ \
   libboost-dev \
   libboost-iostreams-dev \
-  libmagick++-6-headers \
-  libmagick++-6.q16-dev \
+  libvips-dev \
   make \
   && rm -rf /var/lib/apt/lists/*
 
