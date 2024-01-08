@@ -18,32 +18,29 @@ std::list<maskCacheKey> maskCacheLRU;
 std::mutex maskCacheMutex;
 const int maskCacheCapacity = 500;
 
-class Jsonblur : public frei0r::filter
-{
-
+class Jsonblur : public frei0r::filter {
 public:
-    Jsonblur(unsigned int width, unsigned int height)
-    {
+    Jsonblur(unsigned int width, unsigned int height) {
         m_skipFrames = 0;
         m_jsonPath = "";
         m_minScore = 0.2;
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
-        register_param(m_minScore, "minScore", "Float from 0.0 to 1.0. The larger, the higher the confidence the detection is correct. By default objects with a score greater than 0.2 will be blurred.");
+        register_param(m_minScore,
+                       "minScore",
+                       "Float from 0.0 to 1.0. The larger, the higher the confidence the detection is correct. By "
+                       "default objects with a score greater than 0.2 will be blurred.");
     }
 
     ~Jsonblur() {}
 
-    virtual void update(double time, uint32_t *out, const uint32_t *in)
-    {
+    virtual void update(double time, uint32_t *out, const uint32_t *in) {
         auto result = as_vips_image(out);
         as_vips_image(in).write(result);
 
-        for (auto &[_idx, blur] : get_blurs_for_frame())
-        {
+        for (auto &[_idx, blur] : get_blurs_for_frame()) {
             double score = blur.get<double>("score");
-            if (score < m_minScore)
-                continue;
+            if (score < m_minScore) continue;
 
             int x = round(blur.get<double>("x_min"));
             int y = round(blur.get<double>("y_min"));
@@ -51,25 +48,19 @@ public:
             int h = round(blur.get<double>("y_max")) - y;
             auto kind = blur.get<std::string>("kind");
             float roundCornerRatio = 0.0;
-            if (kind == "face")
-                roundCornerRatio = 1.0;
-            if (kind == "person")
-                roundCornerRatio = 0.8;
+            if (kind == "face") roundCornerRatio = 1.0;
+            if (kind == "person") roundCornerRatio = 0.8;
 
             // if detection is at a border, simply enlarge mask to hide rounded
             // corners
-            if (roundCornerRatio > 0 && (x + w > width - 10 || x < 10))
-                w = w * 2;
-            if (roundCornerRatio > 0 && (y + h > height - 10 || y < 10))
-                h = h * 2;
+            if (roundCornerRatio > 0 && (x + w > width - 10 || x < 10)) w = w * 2;
+            if (roundCornerRatio > 0 && (y + h > height - 10 || y < 10)) h = h * 2;
 
             auto [offX, offY, mask] = create_mask(w, h, roundCornerRatio);
 
             // top/left needs shifting to stay centered
-            if (roundCornerRatio > 0 && (x < 5))
-                offX = offX + w * 0.5;
-            if (roundCornerRatio > 0 && (y < 5))
-                offY = offY + h * 0.5;
+            if (roundCornerRatio > 0 && (x < 5)) offX = offX + w * 0.5;
+            if (roundCornerRatio > 0 && (y < 5)) offY = offY + h * 0.5;
 
             // clamp to top left corner
             int left = std::max(0, x - offX);
@@ -80,13 +71,13 @@ public:
             int mTop = std::min(0, y - offY) * -1;
             int mWidth = std::min(mask.width(), int(width) - left) - mLeft;
             int mHeight = std::min(mask.height(), int(height) - top) - mTop;
-            if (mWidth < 0 || mHeight < 0)
-                continue;
+            if (mWidth < 0 || mHeight < 0) continue;
             mask = mask.crop(mLeft, mTop, mWidth, mHeight);
 
             double blurStrength = round(std::max(4.0, std::max(w, h) / 10.0));
             auto cropped = result.crop(left, top, mask.width(), mask.height());
-            auto blurCrop = cropped.gaussblur(blurStrength, vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
+            auto blurCrop = cropped.gaussblur(blurStrength,
+                                              vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
             cropped = mask.ifthenelse(blurCrop, cropped, vips::VImage::option()->set("blend", true));
 
             result.draw_image(cropped, left, top);
@@ -102,19 +93,18 @@ private:
     boost::property_tree::ptree::const_iterator m_blurs_iterator;
     boost::property_tree::ptree::const_iterator m_blurs_last;
 
-    vips::VImage as_vips_image(const uint32_t *location)
-    {
+    vips::VImage as_vips_image(const uint32_t *location) {
         const int bands = 4;
         const int uints_in_uint32 = 4;
 
-        return vips::VImage::new_from_memory((void *)location, size * uints_in_uint32 * bands, width, height, bands, VipsBandFormat::VIPS_FORMAT_UCHAR);
+        return vips::VImage::new_from_memory(
+            (void *)location, size * uints_in_uint32 * bands, width, height, bands, VipsBandFormat::VIPS_FORMAT_UCHAR);
     }
 
     const double percentageBoost = 0.5;
     const double blurRadius = 5;
     const int blurMaskModulo = 5;
-    maskCacheValue create_mask(int w, int h, float roundCornerRatio)
-    {
+    maskCacheValue create_mask(int w, int h, float roundCornerRatio) {
         std::lock_guard<std::mutex> guard(maskCacheMutex);
 
         // round up blur areas to the nearest n pixels to improve cache usage
@@ -123,8 +113,7 @@ private:
 
         auto args = std::make_tuple(w, h, roundCornerRatio);
         auto memoized = maskCache.find(args);
-        if (memoized != maskCache.end())
-        {
+        if (memoized != maskCache.end()) {
             return memoized->second;
         }
 
@@ -142,18 +131,23 @@ private:
         double radY = maskH / 2 * roundCornerRatio;
 
         char *svg = g_strdup_printf(
-            "<svg viewBox=\"0 0 %g %g\"><rect width=\"%g\" height=\"%g\" x=\"%g\" y=\"%g\" rx=\"%g\" ry=\"%g\" fill=\"#fff\" /></svg>",
-            maskW + 2 * blurRadius, maskH + 2 * blurRadius,
-            maskW, maskH,
-            blurRadius, blurRadius,
-            radX, radY);
+            "<svg viewBox=\"0 0 %g %g\"><rect width=\"%g\" height=\"%g\" x=\"%g\" y=\"%g\" rx=\"%g\" ry=\"%g\" "
+            "fill=\"#fff\" /></svg>",
+            maskW + 2 * blurRadius,
+            maskH + 2 * blurRadius,
+            maskW,
+            maskH,
+            blurRadius,
+            blurRadius,
+            radX,
+            radY);
 
         auto tinyMask = vips::VImage::new_from_buffer(std::string(svg), "")
                             .extract_band(1)
-                            .gaussblur(blurRadius, vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
+                            .gaussblur(blurRadius,
+                                       vips::VImage::option()->set("precision", VIPS_PRECISION_APPROXIMATE));
 
-        if (maskCache.size() >= maskCacheCapacity)
-        {
+        if (maskCache.size() >= maskCacheCapacity) {
             // evict oldest element
             auto i = --maskCacheLRU.end();
             maskCache.erase(*i);
@@ -167,13 +161,10 @@ private:
 
     bool blurs_loaded = false;
     int retries = 0;
-    boost::property_tree::ptree get_blurs_for_frame()
-    {
-        if (!blurs_loaded)
-            blurs_loaded = load_blurs_from_disk();
+    boost::property_tree::ptree get_blurs_for_frame() {
+        if (!blurs_loaded) blurs_loaded = load_blurs_from_disk();
 
-        if (!blurs_loaded || m_blurs_iterator == m_blurs_last)
-        {
+        if (!blurs_loaded || m_blurs_iterator == m_blurs_last) {
             blurs_loaded = false;
             retries++;
             auto wait = std::min(10.0 * 60.0, std::pow(2, retries));
@@ -194,19 +185,16 @@ private:
         return blurs;
     }
 
-    bool load_blurs_from_disk()
-    {
+    bool load_blurs_from_disk() {
         std::cerr << "Loading blurs from " << m_jsonPath << std::endl;
         std::ifstream file;
         file.open(m_jsonPath, std::ios_base::in | std::ios_base::binary);
 
         // if the completed file doesn't exist, check if there's a WIP one we
         // can use
-        if (!file)
-            file.open(m_jsonPath + "_wip", std::ios_base::in | std::ios_base::binary);
+        if (!file) file.open(m_jsonPath + "_wip", std::ios_base::in | std::ios_base::binary);
 
-        if (!file)
-        {
+        if (!file) {
             std::cerr << "WARNING: JSON blur info not found at: " << m_jsonPath << std::endl;
             return false;
         }
@@ -219,8 +207,7 @@ private:
         m_blurs_iterator = m_blurs.begin();
         m_blurs_last = m_blurs.end();
 
-        for (int i = 0; i < round(m_skipFrames); i++)
-            m_blurs_iterator++;
+        for (int i = 0; i < round(m_skipFrames); i++) m_blurs_iterator++;
 
         file.close();
         return true;
@@ -230,5 +217,6 @@ private:
 frei0r::construct<Jsonblur> plugin("Jsonblur filter",
                                    "takes detections from an external .json.gz and blurs them in the video",
                                    "Stefan Breunig",
-                                   0, 2,
+                                   0,
+                                   2,
                                    F0R_COLOR_MODEL_RGBA8888);
