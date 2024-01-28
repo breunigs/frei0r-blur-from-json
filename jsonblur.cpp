@@ -21,15 +21,21 @@ const int maskCacheCapacity = 500;
 class Jsonblur : public frei0r::filter {
 public:
     Jsonblur(unsigned int width, unsigned int height) {
-        m_skipFrames = 0;
+        m_skipFramesStart = 0;
+        m_skipFramesEvery = 0;
         m_jsonPath = "";
         m_minScore = 0.2;
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
-        register_param(m_skipFrames, "skipFrames", "How many frames to ignore from the beginning of the .json.gz");
+        register_param(
+            m_skipFramesStart, "skipFramesStart", "How many frames to ignore from the beginning of the .json.gz");
         register_param(m_minScore,
                        "minScore",
                        "Float from 0.0 to 1.0. The larger, the higher the confidence the detection is correct. By "
                        "default objects with a score greater than 0.2 will be blurred.");
+        register_param(m_skipFramesEvery,
+                       "skipFramesEvery",
+                       "How many frames to skip after every blurred frame. Use with FPS reduction like so: -vsync vfr "
+                       "-filter_complex 'select=not(mod(n\\,15)),frei0r=jsonblur:video.MP4.json.gz|0|0.2|15'");
     }
 
     ~Jsonblur() {}
@@ -86,7 +92,8 @@ public:
 
 private:
     std::string m_jsonPath;
-    double m_skipFrames;
+    double m_skipFramesStart;
+    double m_skipFramesEvery;
     double m_minScore;
 
     boost::property_tree::ptree m_blurs;
@@ -171,7 +178,7 @@ private:
             auto wait = std::min(10.0 * 60.0, std::pow(2, retries));
 
             std::cerr << "WARNING: Trying to blur more frames than we have blur info for (";
-            std::cerr << m_jsonPath << "). Currently at frame " << round(m_skipFrames);
+            std::cerr << m_jsonPath << "). Currently at frame " << round(m_skipFramesStart);
             std::cerr << ". Waiting " << wait << "s before retry..." << std::endl;
 
             sleep(wait);
@@ -182,7 +189,11 @@ private:
 
         auto blurs = m_blurs_iterator->second;
         ++m_blurs_iterator;
-        m_skipFrames += 1.0;
+        m_skipFramesStart += 1.0;
+        for (int i = 0; i < m_skipFramesEvery - 1; i++) {
+            ++m_blurs_iterator;
+            m_skipFramesStart += 1.0;
+        }
         return blurs;
     }
 
@@ -208,7 +219,7 @@ private:
         m_blurs_iterator = m_blurs.begin();
         m_blurs_last = m_blurs.end();
 
-        for (int i = 0; i < round(m_skipFrames); i++) m_blurs_iterator++;
+        for (int i = 0; i < round(m_skipFramesStart); i++) m_blurs_iterator++;
 
         file.close();
         return true;
