@@ -3,7 +3,8 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/property_tree/json_parser.hpp>
-#include <boost/property_tree/ptree.hpp>
+#include <rapidjson/document.h>
+#include <rapidjson/istreamwrapper.h>
 #include <algorithm>
 #include <future>
 #include <optional>
@@ -44,18 +45,22 @@ public:
         auto result = as_vips_image(out);
         as_vips_image(in).write(result);
 
-        for (auto &[_idx, blur] : get_blurs_for_frame()) {
-            double score = blur.get<double>("score");
+        auto blurs = get_blurs_for_frame();
+
+        for (int i = 0; i < blurs.Size(); i++) {
+            auto blur = blurs[i].GetObject();
+
+            double score = blur["score"].GetDouble();
             if (score < m_minScore) continue;
 
-            int x = round(blur.get<double>("x_min"));
-            int y = round(blur.get<double>("y_min"));
-            int w = round(blur.get<double>("x_max")) - x;
-            int h = round(blur.get<double>("y_max")) - y;
-            auto kind = blur.get<std::string>("kind");
+            int x = round(blur["x_min"].GetDouble());
+            int y = round(blur["y_min"].GetDouble());
+            int w = round(blur["x_max"].GetDouble()) - x;
+            int h = round(blur["y_max"].GetDouble()) - y;
+            auto kind = blur["kind"].GetString();
             float roundCornerRatio = 0.0;
-            if (kind == "face") roundCornerRatio = 1.0;
-            if (kind == "person") roundCornerRatio = 0.8;
+            if (strcmp("face", kind) == 0) roundCornerRatio = 1.0;
+            if (strcmp("person", kind) == 0) roundCornerRatio = 0.8;
 
             // if detection is at a border, simply enlarge mask to hide rounded
             // corners
@@ -96,9 +101,9 @@ private:
     double m_skipFramesEvery;
     double m_minScore;
 
-    boost::property_tree::ptree m_blurs;
-    boost::property_tree::ptree::const_iterator m_blurs_iterator;
-    boost::property_tree::ptree::const_iterator m_blurs_last;
+    rapidjson::Document m_blurs;
+    rapidjson::Value::ConstMemberIterator m_blurs_iterator;
+    rapidjson::Value::ConstMemberIterator m_blurs_last;
 
     vips::VImage as_vips_image(const uint32_t *location) {
         const int bands = 4;
@@ -169,7 +174,7 @@ private:
 
     bool blurs_loaded = false;
     int retries = 0;
-    boost::property_tree::ptree get_blurs_for_frame() {
+    rapidjson::GenericArray<true, rapidjson::Value> get_blurs_for_frame() {
         if (!blurs_loaded) blurs_loaded = load_blurs_from_disk();
 
         if (!blurs_loaded || m_blurs_iterator == m_blurs_last) {
@@ -187,7 +192,7 @@ private:
 
         retries = 0;
 
-        auto blurs = m_blurs_iterator->second;
+        auto blurs = m_blurs_iterator->value.GetArray();
         ++m_blurs_iterator;
         m_skipFramesStart += 1.0;
         for (int i = 0; i < m_skipFramesEvery - 1; i++) {
@@ -215,9 +220,21 @@ private:
         decompressor.push(boost::iostreams::gzip_decompressor());
         decompressor.push(file);
 
-        boost::property_tree::read_json(decompressor, m_blurs);
-        m_blurs_iterator = m_blurs.begin();
-        m_blurs_last = m_blurs.end();
+        rapidjson::IStreamWrapper isw(decompressor);
+        m_blurs.ParseStream(isw);
+
+        if (m_blurs.HasParseError()) {
+            std::cerr << "WARNING: JSON blur failed to parse: " << m_jsonPath << std::endl;
+            return false;
+        }
+        if (!m_blurs.IsObject()) {
+            std::cerr << "WARNING: JSON blur has unexpected format, should have a map at top level: " << m_jsonPath
+                      << std::endl;
+            return false;
+        }
+
+        m_blurs_iterator = m_blurs.MemberBegin();
+        m_blurs_last = m_blurs.MemberEnd();
 
         for (int i = 0; i < round(m_skipFramesStart); i++) m_blurs_iterator++;
 

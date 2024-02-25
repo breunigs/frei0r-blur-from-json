@@ -10,6 +10,7 @@ RUN apt-get update --yes \
   libboost-iostreams-dev \
   libvips-dev \
   make \
+  rapidjson-dev \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . /build/
