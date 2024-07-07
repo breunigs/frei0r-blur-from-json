@@ -4,7 +4,7 @@ parts.
 
 Example filter definition:
 ```
-frei0r=jsonblur:somefile.MP4.json.gz|14|0.3
+frei0r=jsonblur:somefile.MP4.json.gz|14|0.3|0|1
 ```
 
 * `frei0r` tells ffmpeg to invoke the frei0r filter tooling
@@ -23,6 +23,13 @@ frei0r=jsonblur:somefile.MP4.json.gz|14|0.3
   value. You can most likely omit this, the code has a sensible default. The
   intent is to run the detections once, keeping even the ones with low
   confidence. You can then cheaply tune what actually gets blurred.
+* `0` (param name: `skipFramesEvery`): how many frames to skip after blurring
+  one. This is a performance optimization for the case of "extract every n-th
+  image and blur it". Instead of blurring all images, and then selecting every
+  n-th, the order can be turned around.
+* `1` (param name: `debug`): renders the indexes (0-based) of the blurs used
+  onto the image. This can be a make-shift manual editor, but it's mostly meant
+  for rendering and detection debugging purposes.
 
 ## Example Usage
 

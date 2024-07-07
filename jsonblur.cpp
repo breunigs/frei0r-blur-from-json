@@ -26,6 +26,7 @@ public:
         m_skipFramesEvery = 0;
         m_jsonPath = "";
         m_minScore = 0.2;
+        m_debug = 0.0;
         register_param(m_jsonPath, "jsonPath", "Path to the .json.gz from which to read the anonymizations");
         register_param(
             m_skipFramesStart, "skipFramesStart", "How many frames to ignore from the beginning of the .json.gz");
@@ -37,6 +38,7 @@ public:
                        "skipFramesEvery",
                        "How many frames to skip after every blurred frame. Use with FPS reduction like so: -vsync vfr "
                        "-filter_complex 'select=not(mod(n\\,15)),frei0r=jsonblur:video.MP4.json.gz|0|0.2|15'");
+        register_param(m_debug, "debug", "Render frame and detection indexes onto image");
     }
 
     ~Jsonblur() {}
@@ -44,6 +46,8 @@ public:
     virtual void update(double time, uint32_t *out, const uint32_t *in) {
         auto result = as_vips_image(out);
         as_vips_image(in).write(result);
+
+        if (m_debug > 0) draw_text(result, 0, 0, "frame=" + std::to_string((int)m_skipFramesStart), false);
 
         auto blurs = get_blurs_for_frame();
 
@@ -92,6 +96,8 @@ public:
             cropped = mask.ifthenelse(blurCrop, cropped, vips::VImage::option()->set("blend", true));
 
             result.draw_image(cropped, left, top);
+
+            if (m_debug > 0) draw_text(result, top + mHeight / 2, left + mWidth / 2, std::to_string(i), true);
         }
     }
 
@@ -100,10 +106,22 @@ private:
     double m_skipFramesStart;
     double m_skipFramesEvery;
     double m_minScore;
+    double m_debug;
 
     rapidjson::Document m_blurs;
     rapidjson::Value::ConstMemberIterator m_blurs_iterator;
     rapidjson::Value::ConstMemberIterator m_blurs_last;
+
+    void draw_text(vips::VImage img, int top, int left, std::string text, bool centered) {
+        auto font_size = width / 100;
+        auto font = "Sans " + std::to_string(font_size);
+        auto raster = vips::VImage::text(text.c_str(), vips::VImage::option()->set("font", font.c_str()));
+        if (centered) {
+            left -= raster.width() / 2;
+            top -= raster.height() / 2;
+        }
+        img.draw_image(raster, left, top);
+    }
 
     vips::VImage as_vips_image(const uint32_t *location) {
         const int bands = 4;
