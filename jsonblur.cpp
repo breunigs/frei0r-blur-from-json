@@ -19,6 +19,10 @@ std::list<maskCacheKey> maskCacheLRU;
 std::mutex maskCacheMutex;
 const int maskCacheCapacity = 500;
 
+// if the mask would end at less than this pixels from an image border, the mask
+// is enlarged to avoid a small sliver of "non blurred" at the image edge.
+const int minMaskGap = 10;
+
 class Jsonblur : public frei0r::filter {
 public:
     Jsonblur(unsigned int width, unsigned int height) {
@@ -68,14 +72,14 @@ public:
 
             // if detection is at a border, simply enlarge mask to hide rounded
             // corners
-            if (roundCornerRatio > 0 && (x + w > width - 10 || x < 10)) w = w * 2;
-            if (roundCornerRatio > 0 && (y + h > height - 10 || y < 10)) h = h * 2;
+            if (roundCornerRatio > 0 && (x + w > width - minMaskGap || x < minMaskGap)) w = w * 2;
+            if (roundCornerRatio > 0 && (y + h > height - minMaskGap || y < minMaskGap)) h = h * 2;
 
             auto [offX, offY, mask] = create_mask(w, h, roundCornerRatio);
 
             // top/left needs shifting to stay centered
-            if (roundCornerRatio > 0 && (x < 5)) offX = offX + w * 0.5;
-            if (roundCornerRatio > 0 && (y < 5)) offY = offY + h * 0.5;
+            if (roundCornerRatio > 0 && (x < minMaskGap)) offX = offX + w * 0.5;
+            if (roundCornerRatio > 0 && (y < minMaskGap)) offY = offY + h * 0.5;
 
             // clamp to top left corner
             int left = std::max(0, x - offX);
