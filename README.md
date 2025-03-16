@@ -11,7 +11,11 @@ frei0r=jsonblur:somefile.MP4.json.gz|14|0.3|0|1
 * `jsonblur` is the name of the binary that frei0r will invoke, i.e. the output
   of this repo when being built
 * `somefile.MP4.json.gz` (param name: `jsonPath`) is the path to the file
-  containing the detections that should be blurred. See below for details.
+  containing the detections that should be blurred. Will automatically try
+  various file extensions (`.json.gz`, `.json.zst`, `.json.gz_wip`,
+  `.json.zst_wip`, `.json_wip`, `_wip`, and the given path) to find the
+  detections. The file extension is used to determine the decompression
+  algorithm. See below for format details.
 * `14` (param name: `skipFrames`): skip the first n frames in the `.json.gz`.
   Since is unfortunately required, since frei0r only passes a timestamp to the
   filter, but not the FPS (frames per second). Since the detections are indexed
@@ -75,7 +79,7 @@ cp jsonblur.so ~/.frei0r-1/lib/
 
 See [upstream filter docs] for details.
 
-## .json.gz format
+## .json.gz / .json.zst format
 
 The format is that of [video-anon-lossless], which is built on top of
 [understand.ai's anonymizer]. Here's an example:

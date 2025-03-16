@@ -1,6 +1,7 @@
 #include "frei0r.hpp"
 
 #include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/zstd.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <rapidjson/document.h>
@@ -224,22 +225,34 @@ private:
         return blurs;
     }
 
+    std::vector<std::string> extensions = {
+        ".json.gz", ".json.zst", ".json.gz_wip", ".json.zst_wip", ".json_wip", "_wip", ""};
+
     bool load_blurs_from_disk() {
-        std::cerr << "Loading blurs from " << m_jsonPath << std::endl;
         std::ifstream file;
-        file.open(m_jsonPath, std::ios_base::in | std::ios_base::binary);
 
-        // if the completed file doesn't exist, check if there's a WIP one we
-        // can use
-        if (!file) file.open(m_jsonPath + "_wip", std::ios_base::in | std::ios_base::binary);
+        bool isZst = false;
+        for (const auto &ext : extensions) {
+            auto fullPath = m_jsonPath + ext;
+            file.open(fullPath, std::ios_base::in | std::ios_base::binary);
+            if (file.is_open()) {
+                isZst = fullPath.ends_with(".zst") || fullPath.ends_with(".zst_wip");
+                std::cerr << "Loading blurs from " << (m_jsonPath + ext) << std::endl;
+                break;
+            }
+        }
 
-        if (!file) {
+        if (!file.is_open()) {
             std::cerr << "WARNING: JSON blur info not found at: " << m_jsonPath << std::endl;
             return false;
         }
 
         boost::iostreams::filtering_stream<boost::iostreams::input> decompressor;
-        decompressor.push(boost::iostreams::gzip_decompressor());
+        if (isZst) {
+            decompressor.push(boost::iostreams::zstd_decompressor());
+        } else {
+            decompressor.push(boost::iostreams::gzip_decompressor());
+        }
         decompressor.push(file);
 
         rapidjson::IStreamWrapper isw(decompressor);
